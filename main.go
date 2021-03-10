@@ -53,7 +53,7 @@ var (
 	channels map[string]*voiceChannel
 
 	// Commands users can run
-	commands = [8]string{"meet"}
+	commands = []string{"meet", "aws"}
 
 	// Items read from settings.ini
 	// Token for the discordgo Session.
@@ -71,6 +71,8 @@ var (
 
 	// How long a channel should be allowed to stay unjoined until it is deleted
 	channelDeleteDelay time.Duration
+
+	awsClient *AwsClient
 )
 
 func checkError(err error) {
@@ -86,19 +88,23 @@ func catchPanic() {
 	}
 }
 
+func getEnvVar(name string) string {
+	value, ok := os.LookupEnv(name)
+	if !ok {
+		panic("Environment var '" + name + "' not set")
+	}
+	return value
+}
+
 func main() {
 	var err error
-	var ok bool
 
-	token, ok = os.LookupEnv("TOKEN")
-	if !ok {
-		panic("Environment var 'TOKEN' not set")
-	}
-
-	port, ok = os.LookupEnv("PORT")
-	if !ok {
-		panic("Environment var 'PORT' not set")
-	}
+	token = getEnvVar("TOKEN")
+	port = getEnvVar("PORT")
+	awsAccessKeyId := getEnvVar("AWS_ACCESS_KEY_ID")
+	awsSecretAccessKey := getEnvVar("AWS_SECRET_ACCESS_KEY")
+	awsRegion := getEnvVar("AWS_REGION")
+	awsClient = NewAwsClient(awsAccessKeyId, awsSecretAccessKey, awsRegion)
 
 	prefix = "!"
 	voicePrefix = "PV: "
@@ -208,6 +214,10 @@ func messageCreate(s *discordgo.Session, message *discordgo.MessageCreate) {
 	// TODO: Possibly make this a bit more streamlined since I don't use a fair portion of this.
 	explodedCommand := strings.Split(message.Content[1:], " ")
 	baseCommand := strings.ToLower(explodedCommand[0])
+	subCommand := ""
+	if len(explodedCommand) > 1 {
+		subCommand = strings.ToLower(explodedCommand[1])
+	}
 
 	// Not for us
 	if !stringInSlice(baseCommand, commands[:]) {
@@ -217,6 +227,35 @@ func messageCreate(s *discordgo.Session, message *discordgo.MessageCreate) {
 	switch baseCommand {
 	case "meet":
 		makeNewPrivateVoice(s, strings.Join(explodedCommand[1:], " "), message)
+		break
+	case "aws":
+		firstName := strings.Split(message.Author.Username, " ")[0]
+		switch subCommand {
+		case "state":
+			_, err := s.ChannelMessageSend(message.ChannelID, awsClient.State(firstName))
+			checkError(err)
+			break
+		case "start":
+			_, err := s.ChannelMessageSend(message.ChannelID, awsClient.StartInstance(firstName))
+			checkError(err)
+			break
+		case "sleep":
+			_, err := s.ChannelMessageSend(message.ChannelID, awsClient.HibernateInstance(firstName))
+			checkError(err)
+			break
+		case "stop":
+			_, err := s.ChannelMessageSend(message.ChannelID, awsClient.StopInstance(firstName))
+			checkError(err)
+			break
+		default:
+			_, err := s.ChannelMessageSend(message.ChannelID, "Unknown subcommand: "+subCommand)
+			checkError(err)
+			break
+		}
+		break
+	default:
+		_, err := s.ChannelMessageSend(message.ChannelID, "Unknown command: "+baseCommand)
+		checkError(err)
 		break
 	}
 }
