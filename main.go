@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -312,16 +313,26 @@ func makeNewPrivateVoice(s *discordgo.Session, title string, message *discordgo.
 	guild, err := s.State.Guild(message.GuildID)
 	checkError(err)
 
-	for _, member := range guild.Members {
-		perm, err := s.State.UserChannelPermissions(member.User.ID, parentChannel.ID)
-		checkError(err)
-		if perm&discordgo.PermissionViewChannel == 0 {
-			continue
-		}
-		// Set the owner to have some basic administration rights and to be able to connect
-		err = s.ChannelPermissionSet(newChannel.ID, member.User.ID, discordgo.PermissionOverwriteTypeMember, discordgo.PermissionAllVoice, 0)
-		checkError(err)
+	var waitGroup sync.WaitGroup
+	for _, m := range guild.Members {
+		member := m
+		waitGroup.Add(1)
+		go func() {
+			defer waitGroup.Done()
+			perm, err := s.State.UserChannelPermissions(member.User.ID, parentChannel.ID)
+			checkError(err)
+			if perm&discordgo.PermissionViewChannel == 0 {
+				return
+			}
+			// Set the owner to have some basic administration rights and to be able to connect
+			err = s.ChannelPermissionSet(newChannel.ID, member.User.ID, discordgo.PermissionOverwriteTypeMember, discordgo.PermissionAllVoice, 0)
+			checkError(err)
+		}()
 	}
+	waitGroup.Wait()
+
+	_, err = s.ChannelMessageSend(message.ChannelID, "Finished setting permissions for channel `"+channels[newChannel.ID].Name+"`")
+	checkError(err)
 }
 
 func channelDelete(_ *discordgo.Session, channelDelete *discordgo.ChannelDelete) {
